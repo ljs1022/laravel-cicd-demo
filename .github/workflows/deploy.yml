@@ -90,7 +90,13 @@ jobs:
             # 4. 無縫重啟容器
             docker compose -f docker-compose.prod.yml up -d
 
-            # 5. 強制限制此指令最多只能執行 20 秒，逾時直接判死
+            # 💡 5-1. 強制清除 Laravel 的快取，逼它重新讀取正確的 .env
+            docker exec laravel-cicd-demo-app-1 php artisan config:clear
+
+            # 💡 5-2. 罰站 15 秒確保 MySQL 真的開好門了
+            sleep 15
+
+            # 5-3. 執行資料庫遷移
             timeout 20s docker exec laravel-cicd-demo-app-1 php artisan migrate --force
 
             # 6. 清理空間
