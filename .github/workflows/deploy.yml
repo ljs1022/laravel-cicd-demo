@@ -75,10 +75,10 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          # 💡 核心關鍵：告訴機器人，只要中間有任何一行指令出錯，立刻停下來噴紅燈！
-          script_stop: true
+          script_stop: true          # 1. 指令一旦回傳錯誤，立刻中斷
+          command_timeout: 2m        # 2. 整個步驟只要卡住超過 2 分鐘，強制切斷不燒額度
           script: |
-            # 1. 進入【正確】的專案資料夾
+            # 1. 進入專案資料夾
             cd ~/laravel-cicd-demo
 
             # 2. 登入 GHCR
@@ -90,8 +90,8 @@ jobs:
             # 4. 無縫重啟容器
             docker compose -f docker-compose.prod.yml up -d
 
-            # 5. 執行資料庫遷移
-            docker exec laravel-cicd-demo-app-1 php artisan migrate --force
+            # 5. 強制限制此指令最多只能執行 20 秒，逾時直接判死
+            timeout 20s docker exec laravel-cicd-demo-app-1 php artisan migrate --force
 
             # 6. 清理空間
             docker image prune -a -f
