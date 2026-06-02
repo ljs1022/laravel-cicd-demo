@@ -1,0 +1,95 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master # 當代碼推送到 main 分支時觸發
+
+env:
+  # 定義你的 Image 名稱 (全部小寫)
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/laravel-app
+
+jobs:
+  # 階段 1：測試 (CI)
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_mysql, bcmath
+
+      - name: Install Dependencies
+        run: composer install --prefer-dist --no-progress --no-suggest
+
+      - name: Copy .env
+        run: php -r "file_exists('.env') || copy('.env.example', '.env');"
+
+      - name: Generate Key
+        run: php artisan key:generate
+
+      - name: Run PHPUnit
+        run: php artisan test
+
+  # 階段 2：編譯與推送 (Build & Push)
+  build:
+    name: Build and Push Docker Image
+    needs: test # 必須等 test 成功才會執行
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # 允許寫入 GitHub Container Registry
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # 這是 GitHub 內建的，不用自己設
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:latest
+
+  # 階段 3：伺服器部署 (CD)
+  deploy:
+    name: Deploy to Oracle Cloud
+    needs: build # 必須等 build 成功才會執行
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute SSH Commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            # 1. 進入伺服器上的正式環境資料夾
+            cd ~/laravel-cicd-demo
+
+            # 2. 登入 GHCR (如果是私有專案，拉取 Image 需要權限)
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # 3. 拉取剛剛打包好的最新 Image
+            docker compose -f docker-compose.prod.yml pull
+
+            # 4. 無縫重啟容器
+            docker compose -f docker-compose.prod.yml up -d
+
+            # 5. 執行資料庫遷移 (超重要！)
+            docker exec app php artisan migrate --force
+
+            # 6. 清理雲端硬碟空間，刪除舊的且沒在用的 Image
+            docker image prune -a -f
